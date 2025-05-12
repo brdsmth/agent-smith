@@ -1,36 +1,29 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"time"
 
-	"agent-smith/llm"
-
 	"github.com/gin-gonic/gin"
-	"github.com/joho/godotenv"
 	"github.com/rs/cors"
-)
 
-// Message represents a chat message
-type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
+	"agent-smith/llm"
+)
 
 // ChatRequest represents the incoming chat request
 type ChatRequest struct {
-	Messages    []Message `json:"messages"`
-	Model       string    `json:"model"`
-	Temperature float64   `json:"temperature"`
-	MaxTokens   *int      `json:"max_tokens,omitempty"`
-	Stream      bool      `json:"stream"`
+	Messages    []llm.Message `json:"messages"`
+	Model       string        `json:"model"`
+	Temperature float64       `json:"temperature,omitempty"`
+	MaxTokens   int           `json:"max_tokens,omitempty"`
 }
 
-// ChatResponse represents the chat completion response
+// ChatResponse represents the response format
 type ChatResponse struct {
 	ID      string   `json:"id"`
 	Object  string   `json:"object"`
@@ -40,98 +33,106 @@ type ChatResponse struct {
 	Usage   Usage    `json:"usage"`
 }
 
-// Choice represents a single response choice
 type Choice struct {
-	Index        int      `json:"index"`
-	Message      Message  `json:"message"`
-	FinishReason string   `json:"finish_reason"`
-	Delta        *Message `json:"delta,omitempty"`
+	Index        int         `json:"index"`
+	Message      llm.Message `json:"message"`
+	FinishReason string      `json:"finish_reason"`
 }
 
-// Usage represents token usage information
 type Usage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
 }
 
-// LLMManager handles the LLM operations
-type LLMManager struct {
-	model *llm.MockLLM
+// ModelCreateRequest represents the request to create a new model
+type ModelCreateRequest struct {
+	BaseModel    string  `json:"base_model"`
+	NewModelName string  `json:"new_model_name"`
+	SystemPrompt string  `json:"system_prompt"`
+	Temperature  float64 `json:"temperature"`
 }
 
-// NewLLMManager creates a new LLM manager instance
-func NewLLMManager() *LLMManager {
-	return &LLMManager{
-		model: llm.NewMockLLM(),
-	}
-}
-
-// Initialize sets up the LLM
-func (m *LLMManager) Initialize() error {
-	// The mock LLM doesn't need initialization
-	return nil
-}
-
-// GenerateResponse generates a response from the LLM
-func (m *LLMManager) GenerateResponse(messages []Message, temperature float64, maxTokens *int) (string, error) {
-	if len(messages) == 0 {
-		return "", fmt.Errorf("no messages provided")
-	}
-
-	// Get the last message as the prompt
-	lastMessage := messages[len(messages)-1]
-	return m.model.GenerateResponse(lastMessage.Content)
-}
+// Global variables
+var (
+	modelRegistry *llm.ModelRegistry
+	mistralModel  *llm.MistralLLM
+)
 
 func main() {
-	// Load environment variables
-	if err := godotenv.Load(); err != nil {
-		log.Printf("Warning: .env file not found")
+	// Initialize model registry
+	modelRegistry = llm.NewModelRegistry()
+
+	// Initialize Mistral model
+	mistralModel = llm.NewMistralLLM()
+	if err := mistralModel.Initialize(context.Background()); err != nil {
+		log.Fatalf("Failed to initialize Mistral model: %v", err)
 	}
 
-	// Initialize LLM manager
-	llmManager := NewLLMManager()
-	if err := llmManager.Initialize(); err != nil {
-		log.Fatalf("Failed to initialize LLM: %v", err)
-	}
+	// Register the model
+	modelRegistry.RegisterModel(mistralModel)
 
 	// Create Gin router
 	router := gin.Default()
 
-	// Add CORS middleware
+	// Configure CORS
 	corsMiddleware := cors.New(cors.Options{
-		AllowedOrigins:   []string{"*"},
-		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Origin", "Content-Type", "Accept", "Authorization"},
+		AllowedOrigins:   []string{"http://localhost:3000", "http://localhost:5173"},
+		AllowedMethods:   []string{"GET", "POST", "OPTIONS"},
+		AllowedHeaders:   []string{"Origin", "Content-Type", "Accept"},
+		ExposedHeaders:   []string{"Content-Length"},
 		AllowCredentials: true,
+		MaxAge:           43200, // 12 hours in seconds
 	})
 
 	// Health check endpoint
 	router.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "healthy"})
+		c.JSON(200, gin.H{
+			"status": "ok",
+		})
+	})
+
+	// List available models
+	router.GET("/v1/models", func(c *gin.Context) {
+		models := modelRegistry.ListModels()
+		c.JSON(200, gin.H{
+			"data": models,
+		})
 	})
 
 	// Chat completion endpoint
 	router.POST("/v1/chat/completions", func(c *gin.Context) {
 		var req ChatRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		if err := c.BindJSON(&req); err != nil {
+			c.JSON(400, gin.H{"error": "Invalid request format"})
 			return
 		}
 
-		if req.Stream {
-			handleStreamingResponse(c, req, llmManager)
-			return
-		}
-
-		response, err := llmManager.GenerateResponse(req.Messages, req.Temperature, req.MaxTokens)
+		// Get the requested model
+		model, err := modelRegistry.GetModel(req.Model)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			c.JSON(400, gin.H{"error": fmt.Sprintf("Model not found: %v", err)})
 			return
 		}
 
-		resp := ChatResponse{
+		// Update model config with request parameters
+		config := model.GetConfig()
+		if req.Temperature > 0 {
+			config.Temperature = req.Temperature
+		}
+		if req.MaxTokens > 0 {
+			config.MaxTokens = req.MaxTokens
+		}
+
+		// Generate response
+		response, err := model.GenerateResponse(c.Request.Context(), req.Messages, config)
+		if err != nil {
+			c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to generate response: %v", err)})
+			return
+		}
+
+		// Create response
+		chatResponse := ChatResponse{
 			ID:      fmt.Sprintf("chatcmpl-%d", time.Now().Unix()),
 			Object:  "chat.completion",
 			Created: time.Now().Unix(),
@@ -139,7 +140,7 @@ func main() {
 			Choices: []Choice{
 				{
 					Index: 0,
-					Message: Message{
+					Message: llm.Message{
 						Role:    "assistant",
 						Content: response,
 					},
@@ -153,53 +154,72 @@ func main() {
 			},
 		}
 
-		c.JSON(http.StatusOK, resp)
+		c.JSON(200, chatResponse)
+	})
+
+	// Create new model endpoint
+	router.POST("/v1/models/create", func(c *gin.Context) {
+		var req ModelCreateRequest
+		if err := c.BindJSON(&req); err != nil {
+			c.JSON(400, gin.H{"error": "Invalid request format"})
+			return
+		}
+
+		// Validate that base model exists
+		baseModelReq := struct {
+			Name string `json:"name"`
+		}{
+			Name: req.BaseModel,
+		}
+
+		baseModelData, err := json.Marshal(baseModelReq)
+		if err != nil {
+			c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to marshal base model check request: %v", err)})
+			return
+		}
+
+		// Check if base model exists
+		checkResp, err := http.Post("http://localhost:11434/api/show", "application/json", bytes.NewBuffer(baseModelData))
+		if err != nil {
+			c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to check base model: %v", err)})
+			return
+		}
+		defer checkResp.Body.Close()
+
+		if checkResp.StatusCode != http.StatusOK {
+			c.JSON(400, gin.H{"error": fmt.Sprintf("Base model '%s' not found", req.BaseModel)})
+			return
+		}
+
+		// Create Modelfile
+		modelfilePath, err := llm.CreateModelfile(req.NewModelName, req.BaseModel, req.Temperature, req.SystemPrompt)
+		if err != nil {
+			c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to create Modelfile: %v", err)})
+			return
+		}
+
+		// Create the model using the Modelfile
+		if err := llm.CreateOllamaModel(req.NewModelName, modelfilePath); err != nil {
+			c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to create model: %v", err)})
+			return
+		}
+
+		// Register the new model
+		newModel := llm.NewCustomModel(req.NewModelName, req.NewModelName, req.BaseModel, req.Temperature)
+		if err := modelRegistry.RegisterModel(newModel); err != nil {
+			c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to register model: %v", err)})
+			return
+		}
+
+		c.JSON(200, gin.H{
+			"status": "success",
+			"model":  newModel.GetConfig(),
+		})
 	})
 
 	// Start server
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8000"
-	}
-
-	// Wrap the Gin router with CORS middleware
 	handler := corsMiddleware.Handler(router)
-
-	log.Printf("Server starting on port %s", port)
-	if err := http.ListenAndServe(":"+port, handler); err != nil {
+	if err := http.ListenAndServe(":8000", handler); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
-}
-
-func handleStreamingResponse(c *gin.Context, req ChatRequest, llmManager *LLMManager) {
-	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache")
-	c.Header("Connection", "keep-alive")
-
-	response, err := llmManager.GenerateResponse(req.Messages, req.Temperature, req.MaxTokens)
-	if err != nil {
-		c.SSEvent("error", gin.H{"error": err.Error()})
-		return
-	}
-
-	// Send the response as a single chunk
-	data := map[string]interface{}{
-		"id":      fmt.Sprintf("chatcmpl-%d", time.Now().Unix()),
-		"object":  "chat.completion.chunk",
-		"created": time.Now().Unix(),
-		"model":   req.Model,
-		"choices": []map[string]interface{}{
-			{
-				"index": 0,
-				"delta": map[string]string{
-					"content": response,
-				},
-				"finish_reason": nil,
-			},
-		},
-	}
-
-	jsonData, _ := json.Marshal(data)
-	c.SSEvent("data", string(jsonData))
-	c.SSEvent("data", "[DONE]")
 }
