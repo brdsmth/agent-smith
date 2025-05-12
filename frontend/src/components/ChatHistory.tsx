@@ -6,12 +6,14 @@ export interface ChatHistoryItem {
   title: string;
   lastMessage: string;
   timestamp: Date;
+  model: string;
+  baseModel: string;
 }
 
 interface ChatHistoryProps {
   histories: ChatHistoryItem[];
   selectedChatId: string | null;
-  onSelectChat: (chatId: string) => void;
+  onSelectChat: (id: string) => void;
   onNewChat: () => void;
 }
 
@@ -38,10 +40,18 @@ const ChatHistory: React.FC<ChatHistoryProps> = ({
             }`}
             onClick={() => onSelectChat(chat.id)}
           >
-            <div className={styles.historyTitle}>{chat.title}</div>
-            <div className={styles.historyPreview}>{chat.lastMessage}</div>
-            <div className={styles.historyTimestamp}>
-              {chat.timestamp.toLocaleDateString()}
+            <div className={styles.chatInfo}>
+              <div className={styles.title}>{chat.title}</div>
+              <div className={styles.modelInfo}>
+                <span className={styles.modelName}>{chat.model}</span>
+                {chat.baseModel && chat.baseModel !== chat.model && (
+                  <span className={styles.baseModel}>({chat.baseModel})</span>
+                )}
+              </div>
+              <div className={styles.lastMessage}>{chat.lastMessage}</div>
+            </div>
+            <div className={styles.timestamp}>
+              {new Date(chat.timestamp).toLocaleTimeString()}
             </div>
           </div>
         ))}

@@ -1,11 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send as SendIcon } from '@mui/icons-material';
+import { Send as SendIcon, Edit as EditIcon, Add as AddIcon, Settings as SettingsIcon } from '@mui/icons-material';
 import ReactMarkdown from 'react-markdown';
-import ChatHistory, { ChatHistoryItem } from './ChatHistory';
+import ChatHistory from './ChatHistory';
+import ModelCreator from './ModelCreator';
+import ModelPromptEditor from './ModelPromptEditor';
 import styles from './Chat.module.css';
 
 interface Message {
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'system';
   content: string;
 }
 
@@ -15,6 +17,18 @@ interface Chat {
   title: string;
   lastMessage: string;
   timestamp: Date;
+  model: string;
+  baseModel: string;
+}
+
+interface Model {
+  model_id: string;
+  name: string;
+  description: string;
+  context_window: number;
+  max_tokens: number;
+  temperature: number;
+  base_model: string;
 }
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -24,7 +38,42 @@ const Chat: React.FC = () => {
   const [currentChatId, setCurrentChatId] = useState<string | null>(null);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [editingTitle, setEditingTitle] = useState('');
+  const [availableModels, setAvailableModels] = useState<Model[]>([]);
+  const [selectedModel, setSelectedModel] = useState<string>('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const titleInputRef = useRef<HTMLInputElement>(null);
+  const [showModelCreator, setShowModelCreator] = useState(false);
+  const [showPromptEditor, setShowPromptEditor] = useState(false);
+
+  // Fetch available models on component mount
+  useEffect(() => {
+    const fetchModels = async () => {
+      try {
+        const response = await fetch(`${API_URL}/v1/models`, {
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+          }
+        });
+        if (!response.ok) {
+          throw new Error('Failed to fetch models');
+        }
+        const data = await response.json();
+        console.log('Fetched models:', data);
+        console.log('First model details:', data.data[0]);
+        setAvailableModels(data.data);
+        if (data.data.length > 0) {
+          setSelectedModel(data.data[0].model_id);
+        }
+      } catch (error) {
+        console.error('Error fetching models:', error);
+      }
+    };
+
+    fetchModels();
+  }, []);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -34,16 +83,64 @@ const Chat: React.FC = () => {
     scrollToBottom();
   }, [chats]);
 
-  const createNewChat = () => {
-    const newChat: Chat = {
-      id: Date.now().toString(),
-      messages: [],
-      title: 'New Chat',
-      lastMessage: '',
-      timestamp: new Date(),
-    };
-    setChats(prev => [...prev, newChat]);
-    setCurrentChatId(newChat.id);
+  useEffect(() => {
+    if (chats.length === 0 && availableModels.length > 0) {
+      // Default to Mistral model
+      const defaultModel = availableModels.find(m => m.model_id === 'mistral') || availableModels[0];
+      setSelectedModel(defaultModel.model_id);
+      
+      const newChat: Chat = {
+        id: Date.now().toString(),
+        messages: [],
+        title: 'New Chat',
+        lastMessage: '',
+        timestamp: new Date(),
+        model: defaultModel.model_id,
+        baseModel: defaultModel.base_model || defaultModel.name,
+      };
+      setChats([newChat]);
+      setCurrentChatId(newChat.id);
+    } else if (!currentChatId && chats.length > 0) {
+      const mostRecentChat = chats.reduce((latest, current) => 
+        current.timestamp > latest.timestamp ? current : latest
+      );
+      setCurrentChatId(mostRecentChat.id);
+      setSelectedModel(mostRecentChat.model);
+    }
+  }, [chats.length, currentChatId, availableModels]);
+
+  const handleTitleEdit = () => {
+    if (!currentChatId) return;
+    const currentChat = chats.find(chat => chat.id === currentChatId);
+    if (currentChat) {
+      setEditingTitle(currentChat.title);
+      setIsEditingTitle(true);
+      // Focus the input after it's rendered
+      setTimeout(() => titleInputRef.current?.focus(), 0);
+    }
+  };
+
+  const handleTitleSave = () => {
+    if (!currentChatId || !editingTitle.trim()) return;
+    
+    setChats(prev => prev.map(chat => {
+      if (chat.id === currentChatId) {
+        return {
+          ...chat,
+          title: editingTitle.trim()
+        };
+      }
+      return chat;
+    }));
+    setIsEditingTitle(false);
+  };
+
+  const handleTitleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      handleTitleSave();
+    } else if (e.key === 'Escape') {
+      setIsEditingTitle(false);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -72,6 +169,7 @@ const Chat: React.FC = () => {
       const response = await fetch(`${API_URL}/v1/chat/completions`, {
         method: 'POST',
         headers: {
+          'Accept': 'application/json',
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -79,6 +177,7 @@ const Chat: React.FC = () => {
             ...chats.find(chat => chat.id === currentChatId)?.messages || [],
             { role: 'user', content: userMessage }
           ],
+          model: selectedModel,
           stream: false,
         }),
       });
@@ -123,6 +222,66 @@ const Chat: React.FC = () => {
     }
   };
 
+  const handleModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const newModel = e.target.value;
+    setSelectedModel(newModel);
+    
+    // Update the current chat's model if one is selected
+    if (currentChatId) {
+      setChats(prev => prev.map(chat => {
+        if (chat.id === currentChatId) {
+          return {
+            ...chat,
+            model: newModel
+          };
+        }
+        return chat;
+      }));
+    }
+  };
+
+  const handleModelCreated = async () => {
+    setShowModelCreator(false);
+    // Refresh the models list
+    try {
+      const response = await fetch(`${API_URL}/v1/models`, {
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json'
+        }
+      });
+      if (!response.ok) {
+        throw new Error('Failed to fetch models');
+      }
+      const data = await response.json();
+      setAvailableModels(data.data);
+    } catch (error) {
+      console.error('Error fetching models:', error);
+    }
+  };
+
+  const handlePromptChange = (newPrompt: string) => {
+    // Optionally handle the prompt change, e.g., refresh the chat or update UI
+    console.log('Prompt updated:', newPrompt);
+  };
+
+  const createNewChat = () => {
+    const selectedModelInfo = availableModels.find(m => m.model_id === selectedModel);
+    console.log('Creating new chat with model:', selectedModelInfo);
+    const newChat: Chat = {
+      id: Date.now().toString(),
+      messages: [],
+      title: 'New Chat',
+      lastMessage: '',
+      timestamp: new Date(),
+      model: selectedModel,
+      baseModel: selectedModelInfo?.base_model || selectedModelInfo?.name || 'Unknown',
+    };
+    console.log('New chat object:', newChat);
+    setChats(prev => [...prev, newChat]);
+    setCurrentChatId(newChat.id);
+  };
+
   const currentChat = chats.find(chat => chat.id === currentChatId);
 
   return (
@@ -134,6 +293,8 @@ const Chat: React.FC = () => {
             title: chat.title,
             lastMessage: chat.lastMessage,
             timestamp: chat.timestamp,
+            model: chat.model,
+            baseModel: chat.baseModel,
           }))}
           selectedChatId={currentChatId}
           onSelectChat={setCurrentChatId}
@@ -141,12 +302,69 @@ const Chat: React.FC = () => {
         />
         <div className={styles.chatContainer}>
           <div className={styles.header}>
-            <svg className={styles.headerIcon} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM12 20C7.59 20 4 16.41 4 12C4 7.59 7.59 4 12 4C16.41 4 20 7.59 20 12C20 16.41 16.41 20 12 20Z" fill="currentColor"/>
-              <path d="M12 6C8.69 6 6 8.69 6 12C6 15.31 8.69 18 12 18C15.31 18 18 15.31 18 12C18 8.69 15.31 6 12 6ZM12 16C9.79 16 8 14.21 8 12C8 9.79 9.79 8 12 8C14.21 8 16 9.79 16 12C16 14.21 14.21 16 12 16Z" fill="currentColor"/>
-            </svg>
-            {currentChat?.title || 'New Chat'}
+            {isEditingTitle ? (
+              <div className={styles.titleEditContainer}>
+                <input
+                  ref={titleInputRef}
+                  type="text"
+                  value={editingTitle}
+                  onChange={(e) => setEditingTitle(e.target.value)}
+                  onKeyDown={handleTitleKeyDown}
+                  onBlur={handleTitleSave}
+                  className={styles.titleInput}
+                  placeholder="Enter chat title..."
+                />
+              </div>
+            ) : (
+              <div className={styles.titleContainer} onClick={handleTitleEdit}>
+                {currentChat?.title || 'New Chat'}
+                <EditIcon className={styles.editIcon} />
+              </div>
+            )}
+            <div className={styles.modelSelector}>
+              <select
+                value={selectedModel}
+                onChange={handleModelChange}
+                className={styles.modelSelect}
+                disabled={isLoading}
+              >
+                {availableModels.map(model => (
+                  <option key={model.model_id} value={model.model_id}>
+                    {model.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                className={styles.modelButton}
+                onClick={() => setShowPromptEditor(true)}
+                title="Edit Model Prompt"
+              >
+                <SettingsIcon />
+              </button>
+              <button
+                className={styles.modelButton}
+                onClick={() => setShowModelCreator(true)}
+                title="Create New Model"
+              >
+                <AddIcon />
+              </button>
+            </div>
           </div>
+
+          <ModelCreator
+            availableModels={availableModels}
+            onModelCreated={handleModelCreated}
+            isOpen={showModelCreator}
+            onClose={() => setShowModelCreator(false)}
+          />
+
+          <ModelPromptEditor
+            modelId={selectedModel}
+            onPromptChange={handlePromptChange}
+            isOpen={showPromptEditor}
+            onClose={() => setShowPromptEditor(false)}
+          />
+
           <div className={styles.messagesContainer}>
             {currentChat?.messages.map((message, index) => (
               <div
