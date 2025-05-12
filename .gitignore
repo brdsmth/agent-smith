@@ -49,3 +49,6 @@ next-env.d.ts
 
 # Vite
 .vite/ 
+
+# Models
+models/

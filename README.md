@@ -4,11 +4,11 @@ A modern, scalable platform for deploying and interacting with Large Language Mo
 
 ## Features
 
-- 🚀 Fast and scalable API built with FastAPI
+- 🚀 Fast and scalable API built with Go and Gin
 - 💬 Modern, responsive chat interface built with React and TypeScript
 - 🔒 Secure API key management
 - 📊 Request logging and monitoring
-- 🎯 Support for multiple LLM backends
+- 🎯 Support for multiple LLM backends (currently Ollama)
 - 🔄 Streaming responses for real-time chat
 - 🛠️ Easy deployment with Docker
 
@@ -16,11 +16,11 @@ A modern, scalable platform for deploying and interacting with Large Language Mo
 
 ```
 agent-smith/
-├── api/                 # FastAPI backend
-│   ├── app/            # Main application code
-│   ├── tests/          # Backend tests
+├── api/                 # Go backend
+│   ├── llm/            # LLM interface and implementations
+│   ├── main.go         # Main server code
 │   └── Dockerfile      # Backend container definition
-├── frontend/                # React frontend
+├── frontend/           # React frontend
 │   ├── src/           # Source code
 │   ├── public/        # Static assets
 │   └── Dockerfile     # Frontend container definition
@@ -32,10 +32,10 @@ agent-smith/
 
 ### Prerequisites
 
-- Python 3.9+
+- Go 1.21+
 - Node.js 18+
 - Docker and Docker Compose
-- An LLM model (e.g., LLaMA, Mistral, etc.)
+- Ollama (for running LLMs locally)
 
 ### Development Setup
 
@@ -45,28 +45,28 @@ agent-smith/
    cd agent-smith
    ```
 
-2. Set up the backend:
+2. Install and start Ollama:
    ```bash
-   cd api
-   python -m venv venv
-   source venv/bin/activate  # On Windows: .\venv\Scripts\activate
-   pip install -r requirements.txt
+   # Install Ollama from https://ollama.ai/
+   
+   # Start Ollama service
+   ollama serve
+   
+   # Pull the Mistral model
+   ollama pull mistral
    ```
 
-3. Set up the frontend:
+3. Set up the backend:
+   ```bash
+   cd api
+   go mod download
+   go run main.go
+   ```
+
+4. Set up the frontend:
    ```bash
    cd frontend
    npm install
-   ```
-
-4. Start the development servers:
-   ```bash
-   # Terminal 1 (Backend)
-   cd api
-   uvicorn app.main:app --reload
-
-   # Terminal 2 (Frontend)
-   cd frontend
    npm run dev
    ```
 
@@ -79,9 +79,26 @@ agent-smith/
 
 ## API Documentation
 
-Once the server is running, visit:
-- API Documentation: http://localhost:8000/docs
-- Chat Interface: http://localhost:3000
+The API follows the OpenAI-compatible format:
+
+### Endpoints
+
+- `GET /health` - Health check endpoint
+- `GET /v1/models` - List available models
+- `POST /v1/chat/completions` - Chat completion endpoint
+
+### Chat Completion Request Format
+
+```json
+{
+  "messages": [
+    {"role": "user", "content": "Hello"}
+  ],
+  "model": "mistral",
+  "temperature": 0.7,
+  "max_tokens": 2048
+}
+```
 
 ## Contributing
 
