@@ -9,10 +9,11 @@ import (
 	"net/http"
 	"time"
 
+	"agent-smith/encryption"
+	"agent-smith/llm"
+
 	"github.com/gin-gonic/gin"
 	"github.com/rs/cors"
-
-	"agent-smith/llm"
 )
 
 // ChatRequest represents the incoming chat request
@@ -53,6 +54,35 @@ type ModelCreateRequest struct {
 	Temperature  float64 `json:"temperature"`
 }
 
+// SecureChatRequest represents an encrypted chat request
+type SecureChatRequest struct {
+	Messages    []SecureMessage `json:"messages"`
+	Model       string          `json:"model"`
+	Temperature float64         `json:"temperature,omitempty"`
+	MaxTokens   int             `json:"max_tokens,omitempty"`
+}
+
+type SecureMessage struct {
+	Role    string                      `json:"role"`
+	Content encryption.EncryptedMessage `json:"content"`
+}
+
+// SecureChatResponse represents the encrypted response format
+type SecureChatResponse struct {
+	ID      string         `json:"id"`
+	Object  string         `json:"object"`
+	Created int64          `json:"created"`
+	Model   string         `json:"model"`
+	Choices []SecureChoice `json:"choices"`
+	Usage   Usage          `json:"usage"`
+}
+
+type SecureChoice struct {
+	Index        int           `json:"index"`
+	Message      SecureMessage `json:"message"`
+	FinishReason string        `json:"finish_reason"`
+}
+
 // Global variables
 var (
 	modelRegistry *llm.ModelRegistry
@@ -79,7 +109,7 @@ func main() {
 	corsMiddleware := cors.New(cors.Options{
 		AllowedOrigins:   []string{"http://localhost:3000", "http://localhost:5173"},
 		AllowedMethods:   []string{"GET", "POST", "OPTIONS"},
-		AllowedHeaders:   []string{"Origin", "Content-Type", "Accept"},
+		AllowedHeaders:   []string{"Origin", "Content-Type", "Accept", "X-Client-Public-Key"},
 		ExposedHeaders:   []string{"Content-Length"},
 		AllowCredentials: true,
 		MaxAge:           43200, // 12 hours in seconds
@@ -215,6 +245,124 @@ func main() {
 			"status": "success",
 			"model":  newModel.GetConfig(),
 		})
+	})
+
+	// Add encryption endpoints
+	router.GET("/v1/security/public-key", func(c *gin.Context) {
+		keys := encryption.GetServerKeys()
+		c.JSON(200, gin.H{
+			"publicKey": encryption.EncodeBase64(keys.PublicKey[:]),
+		})
+	})
+
+	// Secure chat completion endpoint
+	router.POST("/v1/chat/completions/secure", func(c *gin.Context) {
+		// Get client's public key from header
+		clientPublicKeyStr := c.GetHeader("X-Client-Public-Key")
+		if clientPublicKeyStr == "" {
+			c.JSON(400, gin.H{"error": "Client public key not provided"})
+			return
+		}
+
+		clientPublicKey, err := encryption.DecodeBase64(clientPublicKeyStr)
+		if err != nil {
+			c.JSON(400, gin.H{"error": "Invalid client public key"})
+			return
+		}
+
+		var req SecureChatRequest
+		if err := c.BindJSON(&req); err != nil {
+			c.JSON(400, gin.H{"error": "Invalid request format"})
+			return
+		}
+
+		// Get the requested model
+		model, err := modelRegistry.GetModel(req.Model)
+		if err != nil {
+			c.JSON(400, gin.H{"error": fmt.Sprintf("Model not found: %v", err)})
+			return
+		}
+
+		// Decrypt all messages
+		serverKeys := encryption.GetServerKeys()
+		var decryptedMessages []llm.Message
+		for _, msg := range req.Messages {
+			encrypted, err := encryption.DecodeBase64(msg.Content.Encrypted)
+			if err != nil {
+				c.JSON(400, gin.H{"error": "Invalid encrypted message"})
+				return
+			}
+
+			nonce, err := encryption.DecodeBase64(msg.Content.Nonce)
+			if err != nil {
+				c.JSON(400, gin.H{"error": "Invalid nonce"})
+				return
+			}
+
+			decrypted, err := serverKeys.DecryptMessage(encrypted, nonce, clientPublicKey)
+			if err != nil {
+				c.JSON(400, gin.H{"error": "Failed to decrypt message"})
+				return
+			}
+
+			log.Printf("[Decrypted Message] Role: %s, Content: %s", msg.Role, string(decrypted))
+
+			decryptedMessages = append(decryptedMessages, llm.Message{
+				Role:    msg.Role,
+				Content: string(decrypted),
+			})
+		}
+
+		// Update model config with request parameters
+		config := model.GetConfig()
+		if req.Temperature > 0 {
+			config.Temperature = req.Temperature
+		}
+		if req.MaxTokens > 0 {
+			config.MaxTokens = req.MaxTokens
+		}
+
+		// Generate response
+		response, err := model.GenerateResponse(c.Request.Context(), decryptedMessages, config)
+		if err != nil {
+			c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to generate response: %v", err)})
+			return
+		}
+
+		// Encrypt the response
+		encrypted, nonce, err := serverKeys.EncryptMessage([]byte(response), clientPublicKey)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "Failed to encrypt response"})
+			return
+		}
+
+		// Create response
+		chatResponse := SecureChatResponse{
+			ID:      fmt.Sprintf("chatcmpl-%d", time.Now().Unix()),
+			Object:  "chat.completion",
+			Created: time.Now().Unix(),
+			Model:   req.Model,
+			Choices: []SecureChoice{
+				{
+					Index: 0,
+					Message: SecureMessage{
+						Role: "assistant",
+						Content: encryption.EncryptedMessage{
+							Encrypted: encryption.EncodeBase64(encrypted),
+							Nonce:     encryption.EncodeBase64(nonce),
+						},
+					},
+					FinishReason: "stop",
+				},
+			},
+			Usage: Usage{
+				PromptTokens:     0,
+				CompletionTokens: 0,
+				TotalTokens:      0,
+			},
+		}
+
+		c.JSON(200, chatResponse)
 	})
 
 	// Start server
