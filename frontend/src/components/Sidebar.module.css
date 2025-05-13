@@ -1,0 +1,161 @@
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  background-color: #202123;
+  border-right: 1px solid var(--color-border);
+  padding: var(--spacing-2);
+  transition: width var(--transition-base);
+  position: relative; /* For absolute positioning of collapse button */
+}
+
+.sidebarHeader {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-2);
+  margin-top: var(--spacing-4);
+  margin-bottom: var(--spacing-4);
+}
+
+.newChatButton {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-3);
+  flex: 1;
+  padding: var(--spacing-3) var(--spacing-4);
+  color: var(--color-text-primary);
+  background-color: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: 0.375rem;
+  font-size: 0.875rem;
+  transition: background-color var(--transition-base);
+  white-space: nowrap;
+}
+
+.newChatButton:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.collapseButton {
+  position: absolute;
+  top: 32px;
+  right: -12px;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  color: var(--color-text-primary);
+  background-color: #202123;
+  border: 1px solid var(--color-border);
+  border-radius: 50%;
+  transition: all var(--transition-base);
+  z-index: 10;
+}
+
+.collapseButton:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.collapseButton svg {
+  transition: transform var(--transition-base);
+}
+
+.collapseButton.collapsed svg {
+  transform: rotate(180deg);
+}
+
+.chatList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-1);
+  padding: var(--spacing-2) 0;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.chatButton {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-3);
+  width: 100%;
+  padding: var(--spacing-3) var(--spacing-4);
+  color: var(--color-text-primary);
+  background-color: transparent;
+  border-radius: 0.375rem;
+  font-size: 0.875rem;
+  text-align: left;
+  transition: background-color var(--transition-base);
+}
+
+.chatButton:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.chatButton.active {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.chatTitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebarFooter {
+  margin-top: auto;
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--spacing-2);
+}
+
+.footerButton {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-3);
+  width: 100%;
+  padding: var(--spacing-3) var(--spacing-4);
+  color: var(--color-text-primary);
+  background-color: transparent;
+  border-radius: 0.375rem;
+  font-size: 0.875rem;
+  transition: background-color var(--transition-base);
+}
+
+.footerButton:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+/* Collapsed state styles */
+.sidebar.collapsed .newChatButton {
+  padding: var(--spacing-3);
+  justify-content: center;
+}
+
+.sidebar.collapsed .chatButton {
+  padding: var(--spacing-2);
+  justify-content: center;
+}
+
+.sidebar.collapsed .footerButton {
+  padding: var(--spacing-3);
+  justify-content: center;
+}
+
+/* Ensure icons are properly sized in collapsed state */
+.sidebar.collapsed svg {
+  width: 20px;
+  height: 20px;
+  min-width: 20px; /* Prevent shrinking */
+}
+
+.greeting {
+  display: flex;
+  align-items: left;
+  padding: var(--spacing-4) var(--spacing-4) var(--spacing-2);
+  color: var(--color-text-primary);
+  font-size: 16px;
+  font-weight: 800;
+  opacity: 0.8;
+} 

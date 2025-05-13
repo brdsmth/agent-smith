@@ -1,411 +1,142 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Send as SendIcon, Edit as EditIcon, Add as AddIcon, Settings as SettingsIcon } from '@mui/icons-material';
-import ReactMarkdown from 'react-markdown';
-import ChatHistory from './ChatHistory';
-import ModelCreator from './ModelCreator';
-import ModelPromptEditor from './ModelPromptEditor';
+import React, { useState, useRef } from 'react';
+import MessageList from './MessageList';
 import styles from './Chat.module.css';
 
 interface Message {
-  role: 'user' | 'assistant' | 'system';
+  role: 'user' | 'assistant';
   content: string;
 }
 
 interface Chat {
   id: string;
-  messages: Message[];
   title: string;
-  lastMessage: string;
+  messages: Message[];
   timestamp: Date;
-  model: string;
-  baseModel: string;
 }
 
-interface Model {
-  model_id: string;
-  name: string;
-  description: string;
-  context_window: number;
-  max_tokens: number;
-  temperature: number;
-  base_model: string;
+interface ChatProps {
+  currentChat: Chat | undefined;
+  onEditChatPrompt: () => void;
+  isLoading: boolean;
+  onSubmit: (content: string) => Promise<void>;
 }
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-
-const Chat: React.FC = () => {
-  const [chats, setChats] = useState<Chat[]>([]);
-  const [currentChatId, setCurrentChatId] = useState<string | null>(null);
+const ChatInput: React.FC<{
+  onSubmit: (content: string) => void;
+  isLoading: boolean;
+}> = React.memo(({ onSubmit, isLoading }) => {
   const [input, setInput] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [isEditingTitle, setIsEditingTitle] = useState(false);
-  const [editingTitle, setEditingTitle] = useState('');
-  const [availableModels, setAvailableModels] = useState<Model[]>([]);
-  const [selectedModel, setSelectedModel] = useState<string>('');
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const titleInputRef = useRef<HTMLInputElement>(null);
-  const [showModelCreator, setShowModelCreator] = useState(false);
-  const [showPromptEditor, setShowPromptEditor] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Fetch available models on component mount
-  useEffect(() => {
-    const fetchModels = async () => {
-      try {
-        const response = await fetch(`${API_URL}/v1/models`, {
-          headers: {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json'
-          }
-        });
-        if (!response.ok) {
-          throw new Error('Failed to fetch models');
-        }
-        const data = await response.json();
-        console.log('Fetched models:', data);
-        console.log('First model details:', data.data[0]);
-        setAvailableModels(data.data);
-        if (data.data.length > 0) {
-          setSelectedModel(data.data[0].model_id);
-        }
-      } catch (error) {
-        console.error('Error fetching models:', error);
-      }
-    };
-
-    fetchModels();
-  }, []);
-
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
-
-  useEffect(() => {
-    scrollToBottom();
-  }, [chats]);
-
-  useEffect(() => {
-    if (chats.length === 0 && availableModels.length > 0) {
-      // Default to Mistral model
-      const defaultModel = availableModels.find(m => m.model_id === 'mistral') || availableModels[0];
-      setSelectedModel(defaultModel.model_id);
-      
-      const newChat: Chat = {
-        id: Date.now().toString(),
-        messages: [],
-        title: 'New Chat',
-        lastMessage: '',
-        timestamp: new Date(),
-        model: defaultModel.model_id,
-        baseModel: defaultModel.base_model || defaultModel.name,
-      };
-      setChats([newChat]);
-      setCurrentChatId(newChat.id);
-    } else if (!currentChatId && chats.length > 0) {
-      const mostRecentChat = chats.reduce((latest, current) => 
-        current.timestamp > latest.timestamp ? current : latest
-      );
-      setCurrentChatId(mostRecentChat.id);
-      setSelectedModel(mostRecentChat.model);
-    }
-  }, [chats.length, currentChatId, availableModels]);
-
-  const handleTitleEdit = () => {
-    if (!currentChatId) return;
-    const currentChat = chats.find(chat => chat.id === currentChatId);
-    if (currentChat) {
-      setEditingTitle(currentChat.title);
-      setIsEditingTitle(true);
-      // Focus the input after it's rendered
-      setTimeout(() => titleInputRef.current?.focus(), 0);
+  const adjustTextareaHeight = () => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`;
     }
   };
 
-  const handleTitleSave = () => {
-    if (!currentChatId || !editingTitle.trim()) return;
-    
-    setChats(prev => prev.map(chat => {
-      if (chat.id === currentChatId) {
-        return {
-          ...chat,
-          title: editingTitle.trim()
-        };
-      }
-      return chat;
-    }));
-    setIsEditingTitle(false);
-  };
-
-  const handleTitleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      handleTitleSave();
-    } else if (e.key === 'Escape') {
-      setIsEditingTitle(false);
-    }
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || isLoading || !currentChatId) return;
-
-    const userMessage = input.trim();
+    if (!input.trim() || isLoading) return;
+    onSubmit(input);
     setInput('');
-
-    // Update chat with new message
-    setChats(prev => prev.map(chat => {
-      if (chat.id === currentChatId) {
-        return {
-          ...chat,
-          messages: [...chat.messages, { role: 'user', content: userMessage }],
-          lastMessage: userMessage,
-          timestamp: new Date(),
-        };
-      }
-      return chat;
-    }));
-
-    setIsLoading(true);
-
-    try {
-      const response = await fetch(`${API_URL}/v1/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          messages: [
-            ...chats.find(chat => chat.id === currentChatId)?.messages || [],
-            { role: 'user', content: userMessage }
-          ],
-          model: selectedModel,
-          stream: false,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to get response');
-      }
-
-      const data = await response.json();
-      const assistantMessage = data.choices[0].message.content;
-
-      // Update chat with assistant's response
-      setChats(prev => prev.map(chat => {
-        if (chat.id === currentChatId) {
-          return {
-            ...chat,
-            messages: [...chat.messages, { role: 'assistant', content: assistantMessage }],
-            lastMessage: assistantMessage,
-            timestamp: new Date(),
-          };
-        }
-        return chat;
-      }));
-    } catch (error) {
-      console.error('Error:', error);
-      setChats(prev => prev.map(chat => {
-        if (chat.id === currentChatId) {
-          return {
-            ...chat,
-            messages: [...chat.messages, { 
-              role: 'assistant', 
-              content: 'Sorry, I encountered an error. Please try again.' 
-            }],
-            lastMessage: 'Error occurred',
-            timestamp: new Date(),
-          };
-        }
-        return chat;
-      }));
-    } finally {
-      setIsLoading(false);
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
     }
   };
 
-  const handleModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const newModel = e.target.value;
-    setSelectedModel(newModel);
-    
-    // Update the current chat's model if one is selected
-    if (currentChatId) {
-      setChats(prev => prev.map(chat => {
-        if (chat.id === currentChatId) {
-          return {
-            ...chat,
-            model: newModel
-          };
-        }
-        return chat;
-      }));
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSubmit(e);
     }
   };
 
-  const handleModelCreated = async () => {
-    setShowModelCreator(false);
-    // Refresh the models list
-    try {
-      const response = await fetch(`${API_URL}/v1/models`, {
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
-        }
-      });
-      if (!response.ok) {
-        throw new Error('Failed to fetch models');
-      }
-      const data = await response.json();
-      setAvailableModels(data.data);
-    } catch (error) {
-      console.error('Error fetching models:', error);
-    }
-  };
+  return (
+    <form onSubmit={handleSubmit} className={styles.inputContainer}>
+      <div className={styles.inputWrapper}>
+        <textarea
+          ref={textareaRef}
+          value={input}
+          onChange={(e) => {
+            setInput(e.target.value);
+            adjustTextareaHeight();
+          }}
+          onKeyDown={handleKeyDown}
+          placeholder="Send a message..."
+          className={styles.textarea}
+          rows={1}
+          disabled={isLoading}
+        />
+        <button
+          type="submit"
+          disabled={!input.trim() || isLoading}
+          className={styles.sendButton}
+          aria-label="Send message"
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <line x1="22" y1="2" x2="11" y2="13" />
+            <polygon points="22 2 15 22 11 13 2 9 22 2" />
+          </svg>
+        </button>
+      </div>
+    </form>
+  );
+});
 
-  const handlePromptChange = (newPrompt: string) => {
-    // Optionally handle the prompt change, e.g., refresh the chat or update UI
-    console.log('Prompt updated:', newPrompt);
-  };
+ChatInput.displayName = 'ChatInput';
 
-  const createNewChat = () => {
-    const selectedModelInfo = availableModels.find(m => m.model_id === selectedModel);
-    console.log('Creating new chat with model:', selectedModelInfo);
-    const newChat: Chat = {
-      id: Date.now().toString(),
-      messages: [],
-      title: 'New Chat',
-      lastMessage: '',
-      timestamp: new Date(),
-      model: selectedModel,
-      baseModel: selectedModelInfo?.base_model || selectedModelInfo?.name || 'Unknown',
-    };
-    console.log('New chat object:', newChat);
-    setChats(prev => [...prev, newChat]);
-    setCurrentChatId(newChat.id);
-  };
-
-  const currentChat = chats.find(chat => chat.id === currentChatId);
+const Chat: React.FC<ChatProps> = ({ 
+  currentChat, 
+  onEditChatPrompt, 
+  isLoading,
+  onSubmit
+}) => {
+  if (!currentChat) {
+    return null;
+  }
 
   return (
     <div className={styles.container}>
-      <div className={styles.layout}>
-        <ChatHistory
-          histories={chats.map(chat => ({
-            id: chat.id,
-            title: chat.title,
-            lastMessage: chat.lastMessage,
-            timestamp: chat.timestamp,
-            model: chat.model,
-            baseModel: chat.baseModel,
-          }))}
-          selectedChatId={currentChatId}
-          onSelectChat={setCurrentChatId}
-          onNewChat={createNewChat}
-        />
-        <div className={styles.chatContainer}>
-          <div className={styles.header}>
-            {isEditingTitle ? (
-              <div className={styles.titleEditContainer}>
-                <input
-                  ref={titleInputRef}
-                  type="text"
-                  value={editingTitle}
-                  onChange={(e) => setEditingTitle(e.target.value)}
-                  onKeyDown={handleTitleKeyDown}
-                  onBlur={handleTitleSave}
-                  className={styles.titleInput}
-                  placeholder="Enter chat title..."
-                />
-              </div>
-            ) : (
-              <div className={styles.titleContainer} onClick={handleTitleEdit}>
-                {currentChat?.title || 'New Chat'}
-                <EditIcon className={styles.editIcon} />
-              </div>
-            )}
-            <div className={styles.modelSelector}>
-              <select
-                value={selectedModel}
-                onChange={handleModelChange}
-                className={styles.modelSelect}
-                disabled={isLoading}
-              >
-                {availableModels.map(model => (
-                  <option key={model.model_id} value={model.model_id}>
-                    {model.name}
-                  </option>
-                ))}
-              </select>
-              <button
-                className={styles.modelButton}
-                onClick={() => setShowPromptEditor(true)}
-                title="Edit Model Prompt"
-              >
-                <SettingsIcon />
-              </button>
-              <button
-                className={styles.modelButton}
-                onClick={() => setShowModelCreator(true)}
-                title="Create New Model"
-              >
-                <AddIcon />
-              </button>
-            </div>
-          </div>
-
-          <ModelCreator
-            availableModels={availableModels}
-            onModelCreated={handleModelCreated}
-            isOpen={showModelCreator}
-            onClose={() => setShowModelCreator(false)}
-          />
-
-          <ModelPromptEditor
-            modelId={selectedModel}
-            onPromptChange={handlePromptChange}
-            isOpen={showPromptEditor}
-            onClose={() => setShowPromptEditor(false)}
-          />
-
-          <div className={styles.messagesContainer}>
-            {currentChat?.messages.map((message, index) => (
-              <div
-                key={index}
-                className={`${styles.message} ${
-                  message.role === 'user' ? styles.messageUser : styles.messageAssistant
-                }`}
-              >
-                <div className={styles.messageContent}>
-                  <ReactMarkdown>{message.content}</ReactMarkdown>
-                </div>
-              </div>
-            ))}
-            {isLoading && (
-              <div className={styles.loadingIndicator}>
-                <div className={styles.loadingDot}></div>
-                <div className={styles.loadingDot}></div>
-                <div className={styles.loadingDot}></div>
-              </div>
-            )}
-            <div ref={messagesEndRef} />
-          </div>
-          <form onSubmit={handleSubmit} className={styles.inputContainer}>
-            <input
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Type your message..."
-              disabled={isLoading || !currentChatId}
-              className={styles.input}
-            />
-            <button
-              type="submit"
-              disabled={isLoading || !input.trim() || !currentChatId}
-              className={styles.sendButton}
-            >
-              <SendIcon />
-            </button>
-          </form>
-        </div>
-      </div>
+      {currentChat.id && (
+        <button 
+          onClick={onEditChatPrompt}
+          className={styles.editPromptButton}
+          aria-label="Edit chat prompt"
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+          </svg>
+          <span>Edit Prompt</span>
+        </button>
+      )}
+      <MessageList 
+        messages={currentChat.messages}
+        isLoading={isLoading}
+      />
+      <ChatInput 
+        onSubmit={onSubmit}
+        isLoading={isLoading}
+      />
     </div>
   );
 };
