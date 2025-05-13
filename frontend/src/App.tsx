@@ -1,12 +1,14 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import Chat from './components/Chat';
 import Sidebar from './components/Sidebar';
 import SettingsModal from './components/SettingsModal';
 import ChatPromptEditor from './components/ChatPromptEditor';
+import { sendChatMessage, fetchServerPublicKey } from './utils/api';
+import { setServerPublicKey, getEncryptionEnabled } from './utils/secureStorage';
 import styles from './App.module.css';
 
 interface Message {
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'system';
   content: string;
 }
 
@@ -29,9 +31,28 @@ const App: React.FC = () => {
     'You are a helpful AI assistant. Answer as concisely as possible.'
   );
   const [isLoading, setIsLoading] = useState(false);
+  const [isEncryptionEnabled, setIsEncryptionEnabled] = useState(getEncryptionEnabled());
+
+  // Initialize encryption on startup
+  useEffect(() => {
+    const initializeEncryption = async () => {
+      if (isEncryptionEnabled) {
+        try {
+          const serverKey = await fetchServerPublicKey();
+          setServerPublicKey(serverKey);
+        } catch (error) {
+          console.error('Failed to initialize encryption:', error);
+          // Optionally disable encryption if initialization fails
+          setIsEncryptionEnabled(false);
+        }
+      }
+    };
+
+    initializeEncryption();
+  }, [isEncryptionEnabled]);
 
   // Initialize with a new chat if none exists
-  React.useEffect(() => {
+  useEffect(() => {
     if (chats.length === 0) {
       createNewChat();
     }
@@ -66,17 +87,28 @@ const App: React.FC = () => {
   };
 
   const handleSaveGlobalPrompt = async (prompt: string) => {
-    setGlobalPrompt(prompt);
-    // You might want to save this to localStorage or your backend
+    try {
+      const validatedPrompt = validatePrompt(prompt);
+      setGlobalPrompt(validatedPrompt);
+    } catch (error) {
+      console.error('Invalid prompt:', error);
+      throw error;
+    }
   };
 
   const handleSaveChatPrompt = async (chatId: string, prompt: string) => {
-    const chat = chats.find(c => c.id === chatId);
-    if (chat) {
-      updateChat({
-        ...chat,
-        systemPrompt: prompt,
-      });
+    try {
+      const validatedPrompt = validatePrompt(prompt);
+      const chat = chats.find(c => c.id === chatId);
+      if (chat) {
+        updateChat({
+          ...chat,
+          systemPrompt: validatedPrompt,
+        });
+      }
+    } catch (error) {
+      console.error('Invalid prompt:', error);
+      throw error;
     }
   };
 
@@ -113,51 +145,38 @@ const App: React.FC = () => {
     setIsLoading(true);
 
     try {
-      // Separate system messages for better context management
-      const systemMessages = [
-        { role: 'system', content: validatePrompt(globalPrompt) },
-        ...(currentChat.systemPrompt ? [{ role: 'system', content: validatePrompt(currentChat.systemPrompt) }] : [])
+      const systemMessages: Message[] = [
+        { role: 'system' as const, content: globalPrompt },
+        ...(currentChat.systemPrompt ? [{ role: 'system' as const, content: currentChat.systemPrompt }] : [])
       ];
 
-      const response = await fetch('http://localhost:8000/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: [
-            ...systemMessages,
-            ...updatedMessages
-          ],
-          model: 'mistral',
-          temperature: 0.7,
-          max_tokens: 2048
-        }),
+      const response = await sendChatMessage({
+        messages: [...systemMessages, ...updatedMessages],
+        model: 'mistral',
+        temperature: 0.7,
+        max_tokens: 2048
       });
 
-      const data = await response.json();
-      if (data.error) {
-        throw new Error(data.error);
-      }
-      
-      const assistantMessage: Message = data.choices[0].message;
+      const assistantMessage = response.choices[0].message;
       updateChat({
         ...currentChat,
         messages: [...updatedMessages, assistantMessage],
         timestamp: new Date(),
       });
     } catch (error) {
-      console.error('Prompt validation error:', error);
+      console.error('Chat error:', error);
       updateChat({
         ...currentChat,
         messages: [...updatedMessages, {
           role: 'assistant',
-          content: 'Error: The prompt is too long or contains invalid content. Please try a shorter prompt.'
+          content: 'Error: Failed to get response. Please check your connection and encryption settings.'
         }],
         timestamp: new Date(),
       });
     } finally {
       setIsLoading(false);
     }
-  }, [getCurrentChat, globalPrompt, updateChat, setIsLoading]);
+  }, [getCurrentChat, globalPrompt, updateChat]);
 
   return (
     <div className={`${styles.layout} ${isSidebarCollapsed ? styles.sidebarCollapsed : ''}`}>

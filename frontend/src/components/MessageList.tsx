@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import styles from './Chat.module.css';
 
 interface Message {
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'system';
   content: string;
 }
 
@@ -37,7 +37,7 @@ const MessageList: React.FC<MessageListProps> = React.memo(({ messages, isLoadin
 
   return (
     <div className={styles.messagesContainer}>
-      {messages.map((message, index) => (
+      {messages.filter(msg => msg.role !== 'system').map((message, index) => (
         <div
           key={index}
           className={`${styles.message} ${

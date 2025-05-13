@@ -3,7 +3,7 @@ import MessageList from './MessageList';
 import styles from './Chat.module.css';
 
 interface Message {
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'system';
   content: string;
 }
 

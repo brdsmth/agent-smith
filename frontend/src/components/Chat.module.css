@@ -176,7 +176,7 @@
 }
 
 /* Edit prompt button styles */
-.editPromptButton {
+/* .editPromptButton {
   position: absolute;
   top: 1rem;
   right: 1rem;
@@ -190,16 +190,16 @@
   color: #ECECF1;
   cursor: pointer;
   transition: background-color 0.2s ease;
-}
+} */
 
-.editPromptButton:hover {
+/* .editPromptButton:hover {
   background-color: rgba(255, 255, 255, 0.2);
-}
+} */
 
-.editPromptButton svg {
+/* .editPromptButton svg {
   width: 16px;
   height: 16px;
-}
+} */
 
 /* Markdown content styles */
 .messageContent p {
@@ -843,6 +843,7 @@
   gap: var(--spacing-2);
   padding: var(--spacing-2) var(--spacing-3);
   background-color: transparent;
+  backdrop-filter: blur(4px);
   border: 1px solid var(--color-border);
   border-radius: 6px;
   color: var(--color-text-primary);
